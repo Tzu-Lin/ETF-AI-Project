@@ -31,13 +31,13 @@ class LstmAutoencoderAnomalyDetector:
         inputs = Input(shape=(self.time_steps, n_features))
          # --- 1. 增強 Encoder ---
         # 將神經元數量從 64 增加到 128，提升學習能力
-        encoder = LSTM(128, activation='relu')(inputs)
+        encoder = LSTM(128, activation='tanh')(inputs)
         # 在 Encoder 的輸出後加入 Dropout，強力防止過擬合
         encoder = Dropout(0.3)(encoder) # 0.3 是一個比較強的 Dropout 率
         # --- 2. 增強 Decoder ---
         decoder = RepeatVector(self.time_steps)(encoder)
         # 同樣增加神經元數量
-        decoder = LSTM(128, activation='relu', return_sequences=True)(decoder)
+        decoder = LSTM(128, activation='tanh', return_sequences=True)(decoder)
         # 在 Decoder 的輸出後也加入 Dropout
         decoder = Dropout(0.3)(decoder)
         output = TimeDistributed(Dense(n_features))(decoder)
@@ -123,6 +123,12 @@ if __name__ == "__main__":
     mae_loss, sequences, reconstructions = detector.predict(data_values)
     normal_idx = np.argmin(mae_loss)
     anomaly_idx = np.argmax(mae_loss)
+
+     # 步驟 4.4: 加入 print 語句來顯示成果 (對應您的成果預覽)
+    print("\n--- 第三階段：預測與評估結果 ---")
+    print(f"最大誤差 (最異常): {np.max(mae_loss):.4f}")
+    print(f"最小誤差 (最正常): {np.min(mae_loss):.4f}")
+    print("------------------------------------")
     
     # 5. 繪製重建對比圖
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
