@@ -43,9 +43,8 @@ class LstmAutoencoderAnomalyDetector:
         output = TimeDistributed(Dense(n_features))(decoder)
         self.model = Model(inputs=inputs, outputs=output)
         # self.model.compile(optimizer='adam', loss='mae')
-        optimizer = Adam(learning_rate=0.0001) 
+        optimizer = Adam(learning_rate=0.01) 
         self.model.compile(optimizer=optimizer, loss='mae') # 替換對抗過擬合
-        # 使用 Adam 優化器，但將其學習率從預設的 0.001 降低到 0.0001
         print("--- 模型架構 ---")
         self.model.summary()
         
