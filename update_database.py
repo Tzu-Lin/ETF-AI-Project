@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 
 DB_FILE = Path("etf_data.db") 
-TICKERS = ["SPY", "QQQ", "VTI"]
+TICKERS = ["SPY", "QQQ", "SSO", "QLD"]
 
 def update_data_to_db():
     conn = sqlite3.connect(DB_FILE)
@@ -19,14 +19,11 @@ def update_data_to_db():
                 print(f"⚠️  警告: {ticker} 沒有下載到任何資料，已跳過。")
                 continue
 
-            # =================================================================
-            # 【【【 這就是解決問題的最終武器 】】】
             # 檢查欄位是否為 MultiIndex 格式
             if isinstance(df.columns, pd.MultiIndex):
                 print(f"偵測到 {ticker} 的欄位為 MultiIndex，正在進行強制扁平化...")
                 # 將 ('Close', 'SPY') 這樣的欄位，強制只取第一層 'Close'
                 df.columns = df.columns.get_level_values(0)
-            # =================================================================
 
             # 將日期索引轉換成一個真正的欄位
             df.index.name = 'Date'

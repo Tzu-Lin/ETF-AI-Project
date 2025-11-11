@@ -89,7 +89,7 @@ st.title("📈 ETF AI 分析與風險視覺化平台")
 
 with st.sidebar:
     st.header("⚙️ 控制面板")
-    selected_ticker = st.selectbox("請選擇要分析的 ETF:", ("SPY", "QQQ", "VTI"))
+    selected_ticker = st.selectbox("請選擇要分析的 ETF:", ("SPY", "QQQ", "SSO", "QLD"))
 
 data = load_and_prepare_data(selected_ticker)
 model = load_model(selected_ticker)

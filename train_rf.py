@@ -113,8 +113,8 @@ def train_one(ticker="SPY", start="2019-01-01"):
 train_one("SPY")
 
 if __name__ == "__main__":
-    # 訓練三支 ETF：SPY、QQQ、VTI
-    for t in ["SPY", "QQQ", "VTI"]:
+    # 訓練四支ETF
+    for t in ["SPY", "QQQ", "SSO", "QLD"]:
         train_one(t)
 
 import matplotlib.pyplot as plt
@@ -132,22 +132,3 @@ plt.grid(True)
 plt.tight_layout()
 plt.show()
 
-# app.py 內，載入模型
-from joblib import load
-from pathlib import Path
-# 假設 selected_etf = "SPY"，且 data 已是該ETF歷史價
-model_path = Path(f"models/rf_{selected_etf}.joblib")
-if model_path.exists():
-    bundle = load(model_path); pipe = bundle["model"]
-    last = data.tail(80).copy()
-    last["Return"] = last["Close"].pct_change()
-    last["MA20"] = last["Close"].rolling(20).mean()
-    last["MA60"] = last["Close"].rolling(60).mean()
-    last["Volatility"] = last["Return"].rolling(20).std()
-    # RSI
-    d = last["Close"].diff(); g = d.clip(lower=0); l = -d.clip(upper=0)
-    rs = g.rolling(14).mean()/l.rolling(14).mean()
-    last["RSI"] = 100 - (100/(1+rs))
-    row = last[bundle["features"]].dropna().iloc[-1:].values
-    proba_up = float(pipe.predict_proba(row)[0,1])*100
-    st.metric("預測：明日上漲機率（實驗）", f"{proba_up:.1f}%")
