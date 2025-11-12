@@ -150,8 +150,8 @@ if __name__ == "__main__":
             acc = accuracy_score(ytest, pred)
             
             # 獲取對"明天"的預測機率 (測試集的最後一筆)
-            tomorrow_up_prob = prob_up[-1][0]
-            tomorrow_down_prob = prob_down[-1][0]
+            tomorrow_up_prob = np.ravel(prob_up)[-1]
+            tomorrow_down_prob = np.ravel(prob_down)[-1]
 
             all_results.append({
                 "Ticker": ticker, 
