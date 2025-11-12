@@ -68,7 +68,12 @@ def train_one(ticker="SPY", start="2019-01-01"):
     ticker: ETF 代碼（預設為 SPY）
     start: 下載資料的起始日期
     """
-
+    # 1. 建立安全的檔案名稱 (與 app.py 的規則完全一致)
+    safe_ticker_name = ticker.lower().replace('.', '_')
+    
+    # 2. 組合出完整的檔案路徑
+    model_path = f"models/rf_{safe_ticker_name}.joblib" 
+    
     # Step 1️⃣：取得收盤價資料
     close = get_close_series(ticker, start=start)
 
@@ -105,16 +110,16 @@ def train_one(ticker="SPY", start="2019-01-01"):
         "model": pipe,
         "features": FEATURES,
         "ticker": ticker
-    }, f"models/rf_{ticker}.joblib")
+    }, model_path) # 使用我們新建立的路徑變數
 
-    print(f"💾 已儲存模型: models/rf_{ticker}.joblib")
+    print(f"✅ 已儲存模型: {model_path}")
 
 # 執行訓練（以 SPY 為例）
 train_one("SPY")
 
 if __name__ == "__main__":
     # 訓練四支ETF
-    for t in ["SPY", "QQQ", "SSO", "QLD"]:
+    for t in ["SPY", "QQQ", "SSO", "QLD", "0050.TW"]:
         train_one(t)
 
 import matplotlib.pyplot as plt

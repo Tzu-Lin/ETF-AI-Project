@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 
 DB_FILE = Path("etf_data.db") 
-TICKERS = ["SPY", "QQQ", "SSO", "QLD"]
+TICKERS = ["SPY", "QQQ", "SSO", "QLD", "0050.TW"]
 
 def update_data_to_db():
     conn = sqlite3.connect(DB_FILE)
@@ -29,13 +29,16 @@ def update_data_to_db():
             df.index.name = 'Date'
             df.reset_index(inplace=True)
             
+             # 1. 建立一個安全的表格名稱，將 '.' 替換成 '_'
+            table_name = ticker.lower().replace('.', '_')
+            
             # 再次確保所有欄位名稱都是首字母大寫的標準格式
             df.columns = [col.capitalize() for col in df.columns]
 
             # 寫入資料庫
-            df.to_sql(name=ticker, con=conn, if_exists='replace', index=False)
+            df.to_sql(name=table_name, con=conn, if_exists='replace', index=False)
             
-            print(f"✅ 成功將 {ticker} 的資料更新至資料庫。")
+            print(f"✅ 成功將 {ticker} 的資料更新至表格 '{table_name}'")
 
         except Exception as e:
             print(f"❌ 更新 {ticker} 資料時發生錯誤: {e}")

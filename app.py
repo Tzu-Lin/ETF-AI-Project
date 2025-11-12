@@ -29,7 +29,12 @@ def load_and_prepare_data(ticker):
         return None
     conn = sqlite3.connect(DB_FILE)
     try:
-        df = pd.read_sql_query(f"SELECT * FROM {ticker}", conn, index_col='Date', parse_dates=['Date'])
+        # 1. 對傳入的 ticker (例如 "0050.TW") 進行同樣的名稱轉換
+        table_name = ticker.lower().replace('.', '_')
+
+        # 2. 使用轉換後安全的名稱來查詢表格
+        query = 'SELECT * FROM "{}"'.format(table_name)
+        df = pd.read_sql_query(query, conn, index_col='Date', parse_dates=['Date'])
     finally:
         conn.close()
     
@@ -89,7 +94,7 @@ st.title("📈 ETF AI 分析與風險視覺化平台")
 
 with st.sidebar:
     st.header("⚙️ 控制面板")
-    selected_ticker = st.selectbox("請選擇要分析的 ETF:", ("SPY", "QQQ", "SSO", "QLD"))
+    selected_ticker = st.selectbox("請選擇要分析的 ETF:", ("SPY", "QQQ", "SSO", "QLD", "0050_TW"))
 
 data = load_and_prepare_data(selected_ticker)
 model = load_model(selected_ticker)
