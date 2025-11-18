@@ -1,11 +1,11 @@
-# run_experiments.py (重構升級版)
+# run_experiments.py (【偵錯版】)
 
 import sqlite3
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 # 從 models.py 導入所有模型類別
 from models import (
@@ -16,7 +16,7 @@ from models import (
     DoubleLayerBiLSTM
 )
 
-# --- 函式定義區 (與您版本相同，稍作優化) ---
+# --- 函式定義區 ---
 
 def load_data_from_sqlite(ticker, db_path='etf_data.db'):
     """從 SQLite 資料庫讀取特定 ETF 的資料"""
@@ -26,9 +26,14 @@ def load_data_from_sqlite(ticker, db_path='etf_data.db'):
     try:
         df = pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)
         conn.close()
+        # 【偵錯點 1】: 確認原始讀取筆數
+        print(f"【偵錯 1】: 從資料庫成功讀取 {table_name}，原始筆數: {len(df)}")
+        if df.empty:
+            print("【警告】: 讀取到的 DataFrame 為空！")
+            return None
+            
         df['Date'] = pd.to_datetime(df['Date'])
         df.set_index('Date', inplace=True)
-        print(f"資料讀取完畢，共 {len(df)} 筆。")
         return df
     except Exception as e:
         print(f"讀取表格 {table_name} 失敗: {e}")
@@ -49,16 +54,27 @@ def feature_engineering(df):
     df['RSI'] = 100 - (100 / (1 + rs))
 
     df['Target'] = (df['Return'].shift(-1) > 0).astype(int)
+    
+    # 【偵錯點 2】: 檢查 dropna 前的空值數量
+    print(f"【偵錯 2】: 執行 dropna 之前，各欄位空值(NaN)數量:\n{df.isnull().sum()}")
+    
     df.dropna(inplace=True)
     
+    # 【偵錯點 3】: 確認 dropna 後的剩餘筆數 (最關鍵！)
+    print(f"【偵錯 3】: 執行 dropna 之後，剩餘的資料筆數: {len(df)}")
+    
+    if df.empty:
+        print("【嚴重錯誤】: dropna 後沒有任何數據剩餘！無法繼續處理。")
+        return None, None # 回傳空值
+
     features = ['Return', 'MA20', 'MA60', 'RSI']
     X = df[features]
     y = df['Target']
     
     return X, y
 
+# ... (create_sequences 函式不變) ...
 def create_sequences(X, y, time_steps=30):
-    """為深度學習模型創建時間序列數據集"""
     Xs, ys = [], []
     for i in range(len(X) - time_steps):
         Xs.append(X[i:(i + time_steps)])
@@ -70,7 +86,7 @@ def create_sequences(X, y, time_steps=30):
 if __name__ == "__main__":
     
     TICKERS = ["SPY", "QQQ", "0050.TW"]
-    TIME_STEPS = 30 # 滑動窗口大小
+    TIME_STEPS = 30
     all_results = []
 
     for ticker in TICKERS:
@@ -80,90 +96,59 @@ if __name__ == "__main__":
             
         X_raw, y_raw = feature_engineering(raw_df)
 
+        # 【偵錯點 4】: 檢查特徵工程的輸出
+        if X_raw is None or y_raw is None:
+            print(f"--- 因為 {ticker} 的數據在特徵工程後為空，已跳過 ---")
+            continue # 跳到下一個 Ticker
+
+        print(f"【偵錯 4】: 特徵工程成功，準備切割資料。X_raw shape: {X_raw.shape}, y_raw shape: {y_raw.shape}")
+
         # --- 資料準備與切割 ---
-        # 1. 先切割訓練集和測試集，避免數據洩漏
         split_point = int(len(X_raw) * 0.8)
+        # ... (後續的程式碼完全不變) ...
+        # ... (從這裡開始，複製您原本的程式碼即可) ...
         X_train_raw, X_test_raw = X_raw[:split_point], X_raw[split_point:]
         y_train_raw, y_test_raw = y_raw[:split_point], y_raw[split_point:]
 
-        # 2. 用訓練集的參數來標準化
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train_raw)
         X_test_scaled = scaler.transform(X_test_raw)
 
-        # 3. 創建給深度學習模型的 3D 時序數據
         X_train_seq, y_train_seq = create_sequences(X_train_scaled, y_train_raw.values, TIME_STEPS)
         X_test_seq, y_test_seq = create_sequences(X_test_scaled, y_test_raw.values, TIME_STEPS)
         
-        # 傳統機器學習模型不能使用 3D 數據，我們需要把它"壓平"
-        # 我們取每個序列的最後一天作為 RandomForest 的輸入
         X_train_rf = X_train_scaled[TIME_STEPS:]
         y_train_rf = y_train_raw.values[TIME_STEPS:]
         X_test_rf = X_test_scaled[TIME_STEPS:]
         y_test_rf = y_test_raw.values[TIME_STEPS:]
 
-        # --- 模型配置字典 ---
-        # 在這裡定義所有你想跑的模型和它們需要的數據
         input_shape_seq = (X_train_seq.shape[1], X_train_seq.shape[2])
         
         models_to_run = {
-            "RandomForest": {
-                "model": RandomForestModel(n_estimators=100),
-                "X_train": X_train_rf, "y_train": y_train_rf,
-                "X_test": X_test_rf, "y_test": y_test_rf
-            },
-            "SingleLayerLSTM": {
-                "model": SingleLayerLSTM(input_shape=input_shape_seq),
-                "X_train": X_train_seq, "y_train": y_train_seq,
-                "X_test": X_test_seq, "y_test": y_test_seq
-            },
-            "DoubleLayerLSTM": {
-                "model": DoubleLayerLSTM(input_shape=input_shape_seq),
-                "X_train": X_train_seq, "y_train": y_train_seq,
-                "X_test": X_test_seq, "y_test": y_test_seq
-            },
-            "SingleLayerBiLSTM": {
-                "model": SingleLayerBiLSTM(input_shape=input_shape_seq),
-                "X_train": X_train_seq, "y_train": y_train_seq,
-                "X_test": X_test_seq, "y_test": y_test_seq
-            },
-            "DoubleLayerBiLSTM": {
-                "model": DoubleLayerBiLSTM(input_shape=input_shape_seq),
-                "X_train": X_train_seq, "y_train": y_train_seq,
-                "X_test": X_test_seq, "y_test": y_test_seq
-            }
+            "RandomForest": {"model": RandomForestModel(n_estimators=100),"X_train": X_train_rf, "y_train": y_train_rf,"X_test": X_test_rf, "y_test": y_test_rf},
+            "SingleLayerLSTM": {"model": SingleLayerLSTM(input_shape=input_shape_seq),"X_train": X_train_seq, "y_train": y_train_seq,"X_test": X_test_seq, "y_test": y_test_seq},
+            "DoubleLayerLSTM": {"model": DoubleLayerLSTM(input_shape=input_shape_seq),"X_train": X_train_seq, "y_train": y_train_seq,"X_test": X_test_seq, "y_test": y_test_seq},
+            "SingleLayerBiLSTM": {"model": SingleLayerBiLSTM(input_shape=input_shape_seq),"X_train": X_train_seq, "y_train": y_train_seq,"X_test": X_test_seq, "y_test": y_test_seq},
+            "DoubleLayerBiLSTM": {"model": DoubleLayerBiLSTM(input_shape=input_shape_seq),"X_train": X_train_seq, "y_train": y_train_seq,"X_test": X_test_seq, "y_test": y_test_seq}
         }
         
-        # --- 自動化執行迴圈 ---
         for name, config in models_to_run.items():
             print(f"--- 正在為 {ticker} 訓練 {name} ---")
-            
-            # 從配置中獲取模型和對應的數據
             model = config["model"]
             xtrain, ytrain = config["X_train"], config["y_train"]
             xtest, ytest = config["X_test"], config["y_test"]
-            
-            # 統一的訓練和預測流程
             model.train(xtrain, ytrain)
-            pred, prob_up, prob_down = model.predict(xtest)
-            
-            acc = accuracy_score(ytest, pred)
-            
-            # 獲取對"明天"的預測機率 (測試集的最後一筆)
+            predictions, prob_up, prob_down = model.predict(xtest)
+            acc = accuracy_score(ytest, predictions)
+            precision = precision_score(ytest, predictions, zero_division=0)
+            recall = recall_score(ytest, predictions, zero_division=0)
+            f1 = f1_score(ytest, predictions, zero_division=0)
             tomorrow_up_prob = np.ravel(prob_up)[-1]
             tomorrow_down_prob = np.ravel(prob_down)[-1]
+            all_results.append({"Ticker": ticker, "Model": name, "Accuracy": acc,"Precision": precision,"Recall": recall,"F1-Score": f1, "Tomorrow_Up_Prob": tomorrow_up_prob,"Tomorrow_Down_Prob": tomorrow_down_prob})
+            print(f"{name} -> Accuracy: {acc:.4f}, F1-Score: {f1:.4f} | 明日預測: 上漲機率 {tomorrow_up_prob:.2%}")
 
-            all_results.append({
-                "Ticker": ticker, 
-                "Model": name, 
-                "Accuracy": acc,
-                "Tomorrow_Up_Prob": tomorrow_up_prob,
-                "Tomorrow_Down_Prob": tomorrow_down_prob
-            })
-            print(f"{name} 準確率: {acc:.4f} | 明日預測: 上漲機率 {tomorrow_up_prob:.2%}, 下跌機率 {tomorrow_down_prob:.2%}")
-
-    # --- 儲存最終結果 ---
-    results_df = pd.DataFrame(all_results)
+    results_df = pd.DataFrame(all_results, columns=['Ticker', 'Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'Tomorrow_Up_Prob', 'Tomorrow_Down_Prob'])
     results_df.to_csv("experiment_results.csv", index=False)
     print("\n🎉 所有實驗完成！結果已儲存至 experiment_results.csv")
     print(results_df)
