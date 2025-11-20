@@ -105,8 +105,7 @@ if __name__ == "__main__":
 
         # --- 資料準備與切割 ---
         split_point = int(len(X_raw) * 0.8)
-        # ... (後續的程式碼完全不變) ...
-        # ... (從這裡開始，複製您原本的程式碼即可) ...
+
         X_train_raw, X_test_raw = X_raw[:split_point], X_raw[split_point:]
         y_train_raw, y_test_raw = y_raw[:split_point], y_raw[split_point:]
 
