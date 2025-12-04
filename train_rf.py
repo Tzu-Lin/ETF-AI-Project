@@ -119,7 +119,7 @@ train_one("SPY")
 
 if __name__ == "__main__":
     # 訓練四支ETF
-    for t in ["SPY", "QQQ", "SSO", "QLD", "0050.TW"]:
+    for t in ["SPY", "QQQ", "SSO", "QLD", "0050.TW", "KRBN"]:
         train_one(t)
 
 import matplotlib.pyplot as plt

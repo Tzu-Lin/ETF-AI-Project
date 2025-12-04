@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 
 DB_FILE = Path("etf_data.db") 
-TICKERS = ["SPY", "QQQ", "SSO", "QLD", "0050.TW"]
+TICKERS = ["SPY", "QQQ", "SSO", "QLD", "0050.TW", "KRBN"]
 
 def update_data_to_db():
     conn = sqlite3.connect(DB_FILE)
