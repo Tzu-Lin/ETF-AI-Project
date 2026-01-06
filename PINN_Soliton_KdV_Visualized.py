@@ -43,7 +43,7 @@ u_initial = 0.5 * c * (1 / torch.cosh(0.5 * np.sqrt(c) * x_initial))**2
 t_initial = torch.zeros_like(x_initial)
 
 # 物理損失的搭配點 (在整個時空域中隨機採樣)
-num_collocation_points = 20000
+num_collocation_points = 5000
 x_collocation = (torch.rand(num_collocation_points, 1) * 40 - 20) # x 在 [-20, 20] 範圍
 t_collocation = torch.rand(num_collocation_points, 1) * 2       # t 在 [0, 2] 範圍
 
@@ -84,7 +84,7 @@ def loss_fn(model, x_init, t_init, u_init, x_coll, t_coll):
     return total_loss, loss_data, loss_physics
 
 # 5. 訓練迴圈
-epochs = 15000
+epochs = 3000 #報告呈現先用3000
 pbar = tqdm(range(epochs), desc="Training PINN for KdV")
 
 for epoch in pbar:
@@ -120,7 +120,8 @@ with torch.no_grad():
 
 # 繪製時空熱圖
 plt.figure(figsize=(10, 6))
-plt.pcolormesh(T, X, U_pred.T, shading='auto', cmap='viridis')
+# 直接傳入 1D 的 t_plot 和 x_plot，並對應轉置後的 U_pred.T
+plt.pcolormesh(t_plot, x_plot, U_pred.T, shading='auto', cmap='viridis')
 plt.colorbar(label='Amplitude u(x,t)')
 plt.xlabel('Time (t)')
 plt.ylabel('Space (x)')
