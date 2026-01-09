@@ -1,0 +1,29 @@
+services:
+  # 靶機：自動化平台 n8n
+  n8n_target:
+    image: n8nio/n8n:latest
+    container_name: n8n_lab_target
+    ports:
+      - "5678:5678"
+    networks:
+      - lab_network  # 加入實驗網路
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=attack_me_123
+
+  # 攻擊機：你的 15 個 Python 演算法
+  attacker_node:
+    image: python:3.10-slim
+    container_name: python_attacker
+    volumes:
+      # 將你本機的 15 個算法腳本掛載進去
+      - ..:/scripts
+    networks:
+      - lab_network  # 必須與靶機在同一個網路
+    tty: true
+    stdin_open: true
+
+networks:
+  lab_network:
+    driver: bridge
