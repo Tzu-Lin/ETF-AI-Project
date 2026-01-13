@@ -1,15 +1,3 @@
-import subprocess
-import sys
-
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly", "pandas", "openai", "python-dotenv", "joblib", "scikit-learn"])
-
-try:
-    import plotly.graph_objects as go
-except ImportError:
-    install("plotly")
-    import plotly.graph_objects as go
-
 
 # --- 1. 匯入所有必要的函式庫 ---
 import streamlit as st
