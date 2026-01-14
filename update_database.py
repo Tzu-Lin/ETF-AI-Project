@@ -12,39 +12,41 @@ def update_data_to_db():
 
     for ticker in TICKERS:
         try:
-            print(f"正在從 yfinance 下載 {ticker} 的資料...")
-            df = yf.download(ticker, start="2019-01-01", auto_adjust=True)
+            print(f"正在從 yfinance 下載 {ticker} 的資料 (十年期)...")
+            
+            # --- 修改處：將 start 改為 2015-01-01 (約十年) 或直接用 period="10y" ---
+            # 使用 period="10y" 會自動抓取從今天回推十年的所有資料
+            df = yf.download(ticker, period="10y", auto_adjust=True)
 
             if df.empty:
                 print(f"⚠️  警告: {ticker} 沒有下載到任何資料，已跳過。")
                 continue
 
-            # 檢查欄位是否為 MultiIndex 格式
+            # 檢查欄位是否為 MultiIndex 格式 (yfinance 新版本常見問題)
             if isinstance(df.columns, pd.MultiIndex):
-                print(f"偵測到 {ticker} 的欄位為 MultiIndex，正在進行強制扁平化...")
-                # 將 ('Close', 'SPY') 這樣的欄位，強制只取第一層 'Close'
                 df.columns = df.columns.get_level_values(0)
 
-            # 將日期索引轉換成一個真正的欄位
+            # 將日期索引轉換成欄位
             df.index.name = 'Date'
             df.reset_index(inplace=True)
             
-             # 1. 建立一個安全的表格名稱，將 '.' 替換成 '_'
+            # 建立表格名稱
             table_name = ticker.lower().replace('.', '_')
             
-            # 再次確保所有欄位名稱都是首字母大寫的標準格式
+            # 確保欄位名稱標準化
             df.columns = [col.capitalize() for col in df.columns]
 
-            # 寫入資料庫
+            # 寫入資料庫 (if_exists='replace' 會洗掉舊的資料，換成新的十年份)
             df.to_sql(name=table_name, con=conn, if_exists='replace', index=False)
             
-            print(f"✅ 成功將 {ticker} 的資料更新至表格 '{table_name}'")
+            # 印出抓取到的日期範圍，讓你自己確認
+            print(f"✅ {ticker} 更新成功！資料範圍: {df['Date'].min().date()} 至 {df['Date'].max().date()}")
 
         except Exception as e:
             print(f"❌ 更新 {ticker} 資料時發生錯誤: {e}")
 
     conn.close()
-    print("資料庫連接已關閉。")
+    print("--- 資料庫更新作業完成 ---")
 
 if __name__ == "__main__":
     update_data_to_db()
