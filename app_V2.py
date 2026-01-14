@@ -38,14 +38,27 @@ st.markdown("""
 def load_and_prepare_data(ticker):
     """從 SQLite 讀取資料並準備特徵"""
     DB_FILE = Path("etf_data.db")
-    if not DB_FILE.exists(): return None
+     # 除錯 1: 檢查檔案是否存在
+    if not DB_FILE.exists(): 
+        st.error(f"❌ 找不到資料庫檔案: {DB_FILE.absolute()}")
+        return None
     
     conn = sqlite3.connect(DB_FILE)
     try:
         table_name = ticker.lower().replace('.', '_')
         query = 'SELECT * FROM "{}"'.format(table_name)
         df = pd.read_sql_query(query, conn, index_col='Date', parse_dates=['Date'])
-    except: return None
+        # --- 🕵️‍♂️ 偵探代碼 START (除錯用) ---
+        if ticker == "0050.TW":  # 只針對你現在選的標的顯示
+            st.sidebar.warning(f"🔍 {ticker} 原始資料檢查：")
+            st.sidebar.write(f"資料庫路徑: {DB_FILE}")
+            st.sidebar.write(f"原始筆數: {len(df)}")
+            st.sidebar.write(f"原始最早日期: {df.index.min().date()}")
+            st.sidebar.write(f"原始最晚日期: {df.index.max().date()}")
+        # --- 🕵️‍♂️ 偵探代碼 END ---
+    except Exception as e: # <--- 修改這裡，印出具體錯誤
+        st.error(f"讀取 {ticker} 時發生錯誤: {e}") 
+        return None
     finally: conn.close()
     
     df["Return"] = df["Close"].pct_change()
@@ -61,7 +74,15 @@ def load_and_prepare_data(ticker):
         return 100 - (100 / (1 + rs))
     
     df["RSI"] = calc_rsi(df["Close"])
+     # --- 🕵️‍♂️ 偵探代碼 PART 2 ---
+    before_drop = len(df)
     df.dropna(inplace=True)
+    after_drop = len(df)
+    
+    if ticker == "0050.TW" and (before_drop - after_drop) > 100:
+        st.sidebar.error(f"⚠️ 警告：dropna() 刪除了 {before_drop - after_drop} 筆資料！")
+        st.sidebar.write("可能是某個技術指標計算出來全是 NaN")
+    # -------------------------
     return df
 
 @st.cache_data(show_spinner=False)
