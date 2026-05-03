@@ -1,0 +1,6 @@
+{
+  "name": "Remix: lwc 法典版 TQQQ 選擇權策略回測工具",
+  "description": "一個用於回測 TQQQ 滾動選擇權策略（Sell Put/Sell Call）與買入持有策略表現的 Web 應用程式，使用本地存儲的歷史數據。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
