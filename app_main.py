@@ -1,26 +1,21 @@
 # app_main.py
-# LLM-ETF 互動式預測平台 (迴歸為主，分類為輔)
+# LLM-ETF 互动式预测平台 (回归为主，分类为辅)
 # 研究生：林子瑜
-# 指導教授：李冠榮 副教授
+# 指导教授：李冠荣 副教授
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import joblib
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 
-# 載入環境變數（API Key 等）
 load_dotenv()
+st.set_page_config(page_title="LLM-ETF 预测平台", layout="wide", page_icon="📈")
 
-# 頁面設定
-st.set_page_config(page_title="LLM-ETF 預測平台", layout="wide", page_icon="📈")
-
-# 隱藏 Streamlit 預設選單與頁尾（選用）
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -29,75 +24,90 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# ====================== 1. 特徵工程函數 ======================
+# ====================== 1. 特徵工程 ======================
 def compute_technical_features(df):
-    """計算技術指標：MA20, MA60, RSI(14), Volatility(20日年化)"""
     df = df.copy()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    
-    # RSI
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['MA60'] = df['Close'].rolling(60).mean()
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
     rs = avg_gain / avg_loss
     df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # 波動率 (年化)
-    log_return = np.log(df['Close'] / df['Close'].shift(1))
-    df['Volatility'] = log_return.rolling(window=20).std() * np.sqrt(252)
-    
-    # 移除空值
-    df = df.dropna().reset_index(drop=True)
-    return df
+    log_ret = np.log(df['Close'] / df['Close'].shift(1))
+    df['Volatility'] = log_ret.rolling(20).std() * np.sqrt(252)
+    return df.dropna().reset_index(drop=True)
 
-def prepare_features_for_prediction(df, window=60):
-    """取最近 window 天特徵 (Close, MA20, MA60, RSI, Volatility)"""
+def prepare_features_for_prediction(df, window=60, flatten=True):
+    """
+    准备预测用的特征矩阵
+    flatten=True  -> 展平为 (1, window*5) 用于随机森林等
+    flatten=False -> 保留 (1, window, 5) 用于 LSTM
+    """
     df_feat = compute_technical_features(df)
     if len(df_feat) < window:
-        st.error(f"資料不足 {window} 天，無法進行預測")
         return None
     last_window = df_feat.iloc[-window:][['Close', 'MA20', 'MA60', 'RSI', 'Volatility']].values
-    return last_window.reshape(1, -1)  # 攤平為 1 x (window*5)
+    if flatten:
+        return last_window.reshape(1, -1)   # (1,300)
+    else:
+        return last_window.reshape(1, window, 5)
 
-# ====================== 2. 資料取得函數 ======================
+# ====================== 2. 资料取得 ======================
 @st.cache_data(ttl=3600)
-def fetch_etf_data(ticker, period='5y'):
-    """從 Yahoo Finance 取得歷史資料，快取一小時"""
+def fetch_etf_data(ticker, period_years=5):
     end = datetime.today()
-    start = end - timedelta(days=5*365)
+    start = end - timedelta(days=period_years*365)
     data = yf.download(ticker, start=start, end=end, progress=False)
+    if data.index.tz is not None:
+        data.index = data.index.tz_localize(None)
     data = data[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
     return data
 
-# ====================== 3. 模型載入（預訓練，避免每次重訓練） ======================
+# ====================== 3. 模型载入 ======================
 @st.cache_resource
 def load_regression_model(ticker, model_type='rf'):
-    """載入迴歸模型 (Random Forest / XGBoost / MLP)"""
-    model_path = f"models/{model_type}_{ticker.lower()}_regressor.pkl"
-    if not os.path.exists(model_path):
-        st.warning(f"模型檔案 {model_path} 不存在，將使用簡易預測（請先離線訓練）")
+    safe_ticker = ticker.lower().replace(".", "_")
+    path = f"models/{model_type}_{safe_ticker}_regressor.pkl"
+    if not os.path.exists(path):
         return None
-    return joblib.load(model_path)
+    obj = joblib.load(path)
+    if hasattr(obj, 'predict'):
+        return obj
+    if isinstance(obj, dict) and 'model' in obj and hasattr(obj['model'], 'predict'):
+        return obj['model']
+    return None
 
 @st.cache_resource
 def load_classification_model(ticker, model_type='rf'):
-    """載入分類模型 (對照用)"""
-    model_path = f"models/{model_type}_{ticker.lower()}_classifier.pkl"
-    if not os.path.exists(model_path):
-        return None
-    return joblib.load(model_path)
-
-def get_scaler(ticker):
-    """載入標準化器（若無則回傳 None）"""
-    scaler_path = f"models/scaler_{ticker.lower()}.pkl"
-    if os.path.exists(scaler_path):
-        return joblib.load(scaler_path)
+    safe_ticker = ticker.lower().replace(".", "_")
+    original_ticker = ticker.replace(".", "_")
+    candidates = [
+        f"models/{model_type}_{original_ticker}.joblib",
+        f"models/{model_type}_{safe_ticker}.joblib",
+        f"models/{model_type}_{safe_ticker}_classifier.pkl"
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            obj = joblib.load(path)
+            if isinstance(obj, dict) and 'model' in obj:
+                model = obj['model']
+                if hasattr(model, 'predict_proba'):
+                    return model
+            elif hasattr(obj, 'predict_proba'):
+                return obj
     return None
 
-# ====================== 4. 評估指標計算 ======================
+def get_scaler(ticker):
+    safe_ticker = ticker.lower().replace(".", "_")
+    path = f"models/scaler_{safe_ticker}.pkl"
+    if os.path.exists(path):
+        return joblib.load(path)
+    return None
+
+# ====================== 4. 评估指标 ======================
 def regression_metrics(y_true, y_pred):
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     mae = mean_absolute_error(y_true, y_pred)
@@ -114,178 +124,159 @@ def classification_metrics(y_true, y_pred):
     acc = accuracy_score(y_true, y_pred)
     return f1, prec, rec, acc
 
-# ====================== 5. GPT / LLM 摘要生成（Gemini 免費版） ======================
-def generate_llm_summary(ticker, pred_price, actual_price, r2, mae, risk_factors=None):
-    """呼叫 Google Gemini API 生成風險摘要 (免費)"""
+# ====================== 5. Gemini 摘要 ======================
+def generate_llm_summary(ticker, pred_price, actual_price, r2, mae):
     try:
         import google.generativeai as genai
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            return "⚠️ 未設定 GEMINI_API_KEY，無法產生摘要。"
+            return "⚠️ 未设定 API Key"
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-你是金融分析專家。以下為 ETF {ticker} 的模型預測結果：
-- 預測收盤價：{pred_price:.2f}
-- 最新實際收盤價：{actual_price:.2f}
-- 決定係數 R²：{r2:.3f}
-- 平均絕對誤差 MAE：{mae:.2f}
-請用繁體中文撰寫一則 30-50 字的風險摘要與操作建議。
-"""
+        prompt = f"ETF {ticker} 预测收盘价 {pred_price:.2f}，实际 {actual_price:.2f}，R²={r2:.3f}，MAE={mae:.2f}。请用繁体中文给 30 字风险摘要。"
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"摘要生成失敗：{str(e)}"
+        return f"摘要失败：{e}"
 
-# ====================== 6. Streamlit UI 主程式 ======================
+# ====================== 6. 主程式 ======================
 def main():
     st.title("📊 LLM-ETF：基於大語言模型輔助之跨市場ETF趨勢預測平台")
     st.markdown("**迴歸預測（收盤價）為主軸，分類結果（漲跌）僅供對照**")
     
-    # 側邊欄控制項
     with st.sidebar:
         st.header("⚙️ 設定")
         ticker = st.selectbox("選擇 ETF", ["SPY", "QQQ", "0050.TW"])
-        task = st.radio(
-            "預測任務",
-            ["📈 迴歸預測 (收盤價) - 主要任務", "📉 分類預測 (漲跌) - 對照組"],
-            help="本研究以迴歸預測為核心，分類結果僅供比較模型在不同任務上的表現"
-        )
-        model_type = st.selectbox("迴歸模型 (僅迴歸任務)", ["rf", "xgb", "mlp"], format_func=lambda x: {"rf":"隨機森林", "xgb":"XGBoost", "mlp":"多層感知機"}.get(x, x))
-        show_compare = st.checkbox("顯示台股 vs 美股五年走勢對比圖", value=True)
-        
-        st.markdown("---")
-        st.caption("資料來源：Yahoo Finance | 模型：預訓練 | LLM：Google Gemini 免費版")
+        task = st.radio("預測任務", ["📈 迴歸預測 (收盤價) - 主要任務", "📉 分類預測 (漲跌) - 對照組"])
+        st.caption("資料：Yahoo Finance | 模型：預訓練 | LLM：Gemini 免費版")
     
-    # 取得資料
-    with st.spinner("載入資料中..."):
-        df = fetch_etf_data(ticker)
-        if df.empty:
-            st.error("無法取得資料，請檢查網路或稍後再試")
-            return
-    
-    # 計算技術指標並準備特徵
+    # 取得资料
+    df = fetch_etf_data(ticker, period_years=5)
+    if df.empty:
+        st.error("無法取得資料")
+        return
     df_feat = compute_technical_features(df)
     if len(df_feat) < 60:
-        st.error("歷史資料不足 60 天，無法進行預測")
+        st.error("少於 60 天")
         return
     
-    # 最近 60 天特徵（攤平）
-    X_latest = prepare_features_for_prediction(df, window=60)
-    
-    # ---------- 迴歸預測（主要任務） ----------
+    # ---------- 迴歸任務 ----------
     if "迴歸預測" in task:
-        st.subheader(f"📈 {ticker} 迴歸預測結果 (收盤價)")
-        
-        # 載入模型與標準化器
-        model = load_regression_model(ticker, model_type)
+        st.subheader(f"📈 {ticker} 迴歸預測")
+        model = load_regression_model(ticker, 'rf')
         scaler = get_scaler(ticker)
-        
         if model is None:
-            st.warning(f"⚠️ 未找到 {model_type}_{ticker.lower()}_regressor.pkl，無法進行迴歸預測。請先離線訓練模型。")
-            # 顯示簡單的佔位資訊
-            st.info("本平台採用預訓練模型，請參閱離線訓練腳本產生模型檔案。")
-        else:
-            # 若需標準化，先對特徵縮放（假設 scaler 存在）
-            if scaler is not None:
-                X_scaled = scaler.transform(X_latest)
-            else:
-                X_scaled = X_latest
-            pred_price = model.predict(X_scaled)[0]
-            actual_price = df_feat['Close'].iloc[-1]
-            
-            # 計算評估指標（需使用測試集，此處展示最近一段時間的簡單評估）
-            # 為簡化，以最近 100 天為測試集（實際應使用完整測試集）
-            test_size = min(100, len(df_feat)-60)
-            X_test = np.array([prepare_features_for_prediction(df_feat.iloc[:i+60], window=60).flatten() for i in range(-test_size, 0) if i+60 >= 0])
-            y_test = df_feat['Close'].iloc[-test_size:].values
-            if len(X_test) > 0 and model is not None:
-                if scaler is not None:
-                    X_test_scaled = scaler.transform(X_test)
-                else:
-                    X_test_scaled = X_test
-                y_pred_test = model.predict(X_test_scaled)
-                mae, mse, rmse, r2 = regression_metrics(y_test, y_pred_test)
-            else:
-                mae = mse = rmse = r2 = 0.0
-            
-            # 顯示預測值與誤差
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("預測收盤價", f"${pred_price:.2f}" if ticker!="0050.TW" else f"NT${pred_price:.2f}")
-            col2.metric("最新實際收盤價", f"${actual_price:.2f}" if ticker!="0050.TW" else f"NT${actual_price:.2f}")
-            col3.metric("絕對誤差 (MAE)", f"${abs(pred_price - actual_price):.2f}" if ticker!="0050.TW" else f"NT${abs(pred_price - actual_price):.2f}")
-            col4.metric("誤差率", f"{abs(pred_price - actual_price)/actual_price:.2%}")
-            
-            # 顯示模型評估指標
-            with st.expander("📊 模型評估指標 (測試集)"):
-                st.write(f"- 均方根誤差 (RMSE)：{rmse:.2f}")
-                st.write(f"- 平均絕對誤差 (MAE)：{mae:.2f}")
-                st.write(f"- 決定係數 (R²)：{r2:.4f}")
-            
-            # GPT 摘要
-            with st.expander("🤖 LLM 風險摘要 (Gemini)"):
-                summary = generate_llm_summary(ticker, pred_price, actual_price, r2, mae)
-                st.write(summary)
-    
-    # ---------- 分類預測（對照組） ----------
-    else:
-        st.subheader(f"📉 {ticker} 分類預測結果 (對照組)")
-        st.caption("漲跌分類僅作為模型對照，本研究核心為迴歸預測")
+            st.warning("迴歸模型不存在，請確認 models/ 內有對應的 .pkl 檔案")
+            return
         
-        clf_model = load_classification_model(ticker, 'rf')
-        if clf_model is None:
-            st.warning(f"⚠️ 未找到分類模型，無法展示分類結果。請先離線訓練 rf_{ticker.lower()}_classifier.pkl")
+        X_latest = prepare_features_for_prediction(df, 60, flatten=True)
+        if X_latest is None:
+            st.error("特徵不足")
+            return
+        
+        # 標準化（如果有 scaler）
+        if scaler:
+            try:
+                X_scaled = scaler.transform(X_latest)
+            except Exception as e:
+                st.error(f"標準化失敗：{e}。請檢查 scaler 是否與特徵維度匹配。")
+                return
         else:
-            # 分類標籤：漲=1, 跌=0
-            y_true = (df_feat['Close'].shift(-1) > df_feat['Close']).astype(int).dropna().values
-            if len(y_true) > 0:
-                # 使用最後 100 筆評估
-                y_pred_prob = clf_model.predict_proba(X_latest)[:,1]  # 實際應使用測試集
-                y_pred = (y_pred_prob > 0.5).astype(int)
-                f1, prec, rec, acc = classification_metrics(y_true[-100:], y_pred[-100:] if len(y_pred)>=100 else y_pred)
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("F1-score", f"{f1:.3f}")
-                col2.metric("精確率", f"{prec:.3f}")
-                col3.metric("召回率", f"{rec:.3f}")
-                col4.metric("準確率", f"{acc:.3f}")
+            X_scaled = X_latest
+        
+        pred_price = float(model.predict(X_scaled)[0])
+        actual_price = float(df_feat['Close'].iloc[-1])
+        
+        # 簡易測試集評估
+        test_size = min(100, len(df_feat)-60)
+        X_test, y_test = [], []
+        for offset in range(1, test_size+1):
+            idx = len(df_feat) - offset
+            if idx >= 60:
+                feat = prepare_features_for_prediction(df_feat.iloc[:idx], 60, flatten=True)
+                if feat is not None:
+                    X_test.append(feat.flatten())
+                    y_test.append(float(df_feat.iloc[idx]['Close']))
+        if X_test:
+            Xt = np.array(X_test)
+            yt = np.array(y_test)
+            if scaler:
+                Xt = scaler.transform(Xt)
+            y_pred_test = model.predict(Xt)
+            mae, mse, rmse, r2 = regression_metrics(yt, y_pred_test)
+        else:
+            mae = mse = rmse = r2 = 0.0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        cur = "NT$" if ticker=="0050.TW" else "$"
+        col1.metric("預測收盤價", f"{cur}{pred_price:.2f}")
+        col2.metric("最新實際", f"{cur}{actual_price:.2f}")
+        col3.metric("絕對誤差", f"{cur}{abs(pred_price-actual_price):.2f}")
+        col4.metric("誤差率", f"{abs(pred_price-actual_price)/actual_price:.2%}")
+        
+        with st.expander("📊 模型評估指標 (測試集)"):
+            st.write(f"RMSE: {rmse:.2f}, MAE: {mae:.2f}, R²: {r2:.4f}")
+        with st.expander("🤖 LLM 風險摘要 (Gemini)"):
+            st.write(generate_llm_summary(ticker, pred_price, actual_price, r2, mae))
     
-    # ---------- 台股 vs 美股五年走勢對比圖 ----------
-    if show_compare:
-        st.subheader("🌍 台股與美股近五年走勢對比")
-        with st.spinner("繪製走勢圖中..."):
-            end = datetime.today()
-            start = end - timedelta(days=5*365)
-            spy = yf.download("SPY", start=start, end=end, progress=False)["Close"]
-            tw = yf.download("0050.TW", start=start, end=end, progress=False)["Close"]
-            # 基準化至 100
-            spy_norm = spy / spy.iloc[0] * 100
-            tw_norm = tw / tw.iloc[0] * 100
-            
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-            fig.add_trace(go.Scatter(x=spy_norm.index, y=spy_norm, name="SPY (美股)", line=dict(color="blue")), secondary_y=False)
-            fig.add_trace(go.Scatter(x=tw_norm.index, y=tw_norm, name="0050.TW (台股)", line=dict(color="red")), secondary_y=True)
-            fig.update_layout(title="台股與美股近五年走勢對比 (基準化至 100)", xaxis_title="日期", height=500, hovermode="x unified")
-            fig.update_yaxes(title_text="SPY 基準化指數", secondary_y=False)
-            fig.update_yaxes(title_text="0050.TW 基準化指數", secondary_y=True)
-            st.plotly_chart(fig, use_container_width=True)
+    # ---------- 分類任務（對照組） ----------
+    else:
+        st.subheader(f"📉 {ticker} 分類預測 (對照組)")
+        clf = load_classification_model(ticker, 'rf')
+        if clf is None:
+            st.warning("分類模型不存在或無法讀取（請檢查 models/ 內的 .joblib 檔案）")
+            return
+        
+        X_latest = prepare_features_for_prediction(df, 60, flatten=True)   # 預設展平
+        if X_latest is None:
+            st.error("特徵不足")
+            return
+        
+        # 嘗試預測，若發生特徵數錯誤則提示使用者
+        try:
+            # 若模型有 n_features_in_ 屬性，檢查是否與 X_latest 維度一致
+            if hasattr(clf, 'n_features_in_'):
+                expected_n = clf.n_features_in_
+                actual_n = X_latest.shape[1]
+                if expected_n != actual_n:
+                    st.error(f"模型期望 {expected_n} 個特徵，但輸入為 {actual_n} 個。可能原因是訓練時未展平？請檢查模型訓練方式。")
+                    return
+            prob = clf.predict_proba(X_latest)[0][1]
+            st.metric("上漲機率", f"{prob:.2%}")
+            st.write("**預測結果：上漲**" if prob>0.5 else "**預測結果：下跌**")
+        except Exception as e:
+            st.error(f"分類預測失敗：{e}\n可能是特徵維度不一致。建議改用迴歸任務為主要分析。")
+            st.stop()
+        
+        # 測試集評估
+        test_size = min(100, len(df_feat)-60)
+        y_true, y_pred = [], []
+        for offset in range(1, test_size+1):
+            idx = len(df_feat) - offset
+            if idx >= 60:
+                feat = prepare_features_for_prediction(df_feat.iloc[:idx], 60, flatten=True)
+                if feat is not None:
+                    true_lbl = 1 if df_feat.iloc[idx]['Close'] > df_feat.iloc[idx-1]['Close'] else 0
+                    try:
+                        prob_val = clf.predict_proba(feat)[0][1]
+                        pred_lbl = 1 if prob_val>0.5 else 0
+                        y_true.append(true_lbl)
+                        y_pred.append(pred_lbl)
+                    except:
+                        pass
+        if y_true:
+            f1, prec, rec, acc = classification_metrics(y_true, y_pred)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("F1-score", f"{f1:.3f}")
+            col2.metric("精確率", f"{prec:.3f}")
+            col3.metric("召回率", f"{rec:.3f}")
+            col4.metric("準確率", f"{acc:.3f}")
+        else:
+            st.info("測試集樣本不足，無法計算分類指標")
     
-    # ---------- 顯示原始技術指標 ----------
-    with st.expander("📋 最新技術指標 (60天平均值)"):
-        latest = df_feat[['Close', 'MA20', 'MA60', 'RSI', 'Volatility']].iloc[-1]
-        st.write(latest)
+    # 顯示最新技術指標（簡化）
+    with st.expander("📋 最新技術指標"):
+        st.write(df_feat[['Close','MA20','MA60','RSI','Volatility']].iloc[-1])
 
-# ====================== 離線訓練輔助說明 ======================
 if __name__ == "__main__":
-    st.sidebar.markdown("---")
-    st.sidebar.info(
-        "💡 **模型訓練提示**\n"
-        "若缺少模型檔案，請先執行以下離線訓練腳本：\n"
-        "```python\n"
-        "from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier\n"
-        "import joblib, yfinance as yf, pandas as pd\n"
-        "# 下載資料、計算特徵、訓練迴歸模型與分類模型\n"
-        "# 並儲存至 models/ 資料夾\n"
-        "```\n"
-        "詳細訓練程式請參考論文附錄。"
-    )
     main()
