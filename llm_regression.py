@@ -20,7 +20,7 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # ========== 參數設定 ==========
-TICKER = "spy"                # 可選 spy, qqq, 0050_tw
+TICKER = "0050_tw"                # 可選 spy, qqq, 0050_tw
 DB_PATH = "etf_data.db"
 WINDOW = 60                   # 使用過去 60 天
 TEST_START_DATE = "2022-01-01"
