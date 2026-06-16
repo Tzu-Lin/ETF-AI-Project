@@ -111,9 +111,9 @@ for idx in test_indices:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",   # 使用 gpt-4o-mini，成本低且數值能力好
+            model="gpt-4o-mini",   
             messages=[{"role": "user", "content": prompt}],
-            temperature=0,
+            temperature=0.7,
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content

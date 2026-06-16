@@ -146,6 +146,23 @@ if __name__ == "__main__":
             tomorrow_down_prob = np.ravel(prob_down)[-1]
             all_results.append({"Ticker": ticker, "Model": name, "Accuracy": acc,"Precision": precision,"Recall": recall,"F1-Score": f1, "Tomorrow_Up_Prob": tomorrow_up_prob,"Tomorrow_Down_Prob": tomorrow_down_prob})
             print(f"{name} -> Accuracy: {acc:.4f}, F1-Score: {f1:.4f} | 明日預測: 上漲機率 {tomorrow_up_prob:.2%}")
+            # ===== 計算 Always-Up 基準（全部預測為「漲」）=====
+            # 用與模型相同的測試集標籤 y_test_rf 來算，確保基準與模型可比
+            y_true_base = y_test_rf
+            y_pred_base = np.ones_like(y_true_base)   # 全部猜「漲」(1)
+
+            base_acc       = accuracy_score(y_true_base, y_pred_base)
+            base_precision = precision_score(y_true_base, y_pred_base, zero_division=0)
+            base_recall    = recall_score(y_true_base, y_pred_base, zero_division=0)
+            base_f1        = f1_score(y_true_base, y_pred_base, zero_division=0)
+
+            all_results.append({
+                "Ticker": ticker, "Model": "Always-Up (Baseline)",
+                "Accuracy": base_acc, "Precision": base_precision,
+                "Recall": base_recall, "F1-Score": base_f1,
+                "Tomorrow_Up_Prob": 1.0, "Tomorrow_Down_Prob": 0.0
+            })
+            print(f"Always-Up 基準 -> Accuracy: {base_acc:.4f}, F1-Score: {base_f1:.4f}")
 
     results_df = pd.DataFrame(all_results, columns=['Ticker', 'Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'Tomorrow_Up_Prob', 'Tomorrow_Down_Prob'])
     results_df.to_csv("experiment_results.csv", index=False)

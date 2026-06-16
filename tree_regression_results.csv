@@ -1,12 +1,15 @@
 ﻿市場,模型,訓練集MSE,測試集MSE,測試集MAPE(%)
+SPY,Decision Tree,2.0362,2782.1,8.64
 SPY,Random Forest,2.4263,2725.0,8.44
 SPY,XGBoost,5.35,2797.95,8.66
 SPY,AdaBoost,20.5274,3398.31,9.8
 SPY,Gradient Boosting,4.3163,2821.29,8.66
+QQQ,Decision Tree,1.9194,3362.08,11.63
 QQQ,Random Forest,2.3133,3137.76,11.09
 QQQ,XGBoost,5.313,3291.94,11.18
 QQQ,AdaBoost,17.3061,3596.48,11.88
 QQQ,Gradient Boosting,4.2605,3277.47,11.4
+0050.TW,Decision Tree,0.0118,45.87,9.76
 0050.TW,Random Forest,0.0136,35.11,8.63
 0050.TW,XGBoost,0.0299,37.17,8.91
 0050.TW,AdaBoost,0.1067,33.98,8.52

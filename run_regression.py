@@ -9,6 +9,7 @@
 # =============================================================
 import sqlite3, warnings
 import pandas as pd, numpy as np
+from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, AdaBoostRegressor, GradientBoostingRegressor
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
@@ -48,6 +49,7 @@ def make_features(df):
 
 def models():
     return {
+        "Decision Tree":     DecisionTreeRegressor(max_depth=10, random_state=42),
         "Random Forest":     RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
         "XGBoost":           XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42, verbosity=0),
         "AdaBoost":          AdaBoostRegressor(n_estimators=100, random_state=42),

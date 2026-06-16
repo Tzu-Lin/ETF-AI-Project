@@ -55,7 +55,7 @@ def load_and_prepare_data(ticker):
         return None
     finally:
         conn.close()
-    
+
     # 計算報酬率
     df["Return"] = df["Close"].pct_change()
     # 簡單移動平均線
@@ -63,7 +63,7 @@ def load_and_prepare_data(ticker):
     df["MA60"] = df["Close"].rolling(60).mean()
     # 波動率 (20 天報酬率的標準差)
     df["Volatility"] = df["Return"].rolling(20).std()
-    
+
     # RSI (相對強弱指標) 計算函數
     def calc_rsi(s, period=14):
         delta = s.diff()
@@ -88,18 +88,18 @@ def train_classification_model(df, model_name):
     # 最後一筆資料沒有次日標籤，移除
     X = X.iloc[:-1]
     y = y.iloc[:-1]
-    
+
     # 依時間順序分割 80% 訓練、20% 測試（不使用隨機打亂）
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    
+
     # 標準化：讓每個特徵平均值為 0，標準差為 1
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     X_full_scaled = scaler.transform(X)   # 用於取得全序列上漲機率
-    
+
     # 根據選擇的模型名稱建立對應的分類器
     if "Random Forest" in model_name:
         model = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
@@ -111,19 +111,19 @@ def train_classification_model(df, model_name):
         model = SVC(kernel='rbf', C=1e3, gamma=0.1, probability=True, random_state=42)
     else:  # Deep Learning (MLP)
         model = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42)
-    
+
     model.fit(X_train_scaled, y_train)
     y_pred = model.predict(X_test_scaled)
-    
+
     # 計算評估指標
     f1 = f1_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
     acc = accuracy_score(y_test, y_pred)
-    
+
     # 全序列上漲機率（用於圖表）
     proba_full = model.predict_proba(X_full_scaled)[:, 1]
-    
+
     return {
         "name": model_name,
         "f1": f1,
@@ -135,48 +135,59 @@ def train_classification_model(df, model_name):
         "scaler": scaler
     }
 
-# ==================== 5. 迴歸模型訓練（主要任務） ====================
-# 目標：預測次日收盤價的連續數值
-# 輸入特徵：同分類模型（四項技術指標）
-# 輸出：R², MSE, 及下一個交易日的預測價格
+# ==================== 5. 迴歸模型訓練（主要任務）【已修正】 ====================
+# 修正重點：
+#   舊版直接用 RandomForestRegressor 預測「絕對收盤價」，因樹模型無法外推，
+#   且特徵(MA/RSI/波動率)標準化後不含「現價」資訊，導致預測掉到訓練範圍內(如477)、R² 為負。
+#   新版改為「預測次日報酬率」，再用今日收盤價換算回價格：
+#       明日預測價 = 今日收盤價 × (1 + 預測報酬率)
+#   這樣預測值必然落在今日價格附近(合理)，且 R² 反映報酬率的真實可預測性。
 @st.cache_resource(ttl=3600)   # 快取模型，避免每次互動都重新訓練
 def train_regression_model(df, model_name="Random Forest Regressor"):
     feature_cols = ["MA20", "MA60", "Volatility", "RSI"]
     X = df[feature_cols].copy()
-    # 目標：次日收盤價
-    y = df['Close'].shift(-1)
-    X = X.iloc[:-1]
-    y = y.iloc[:-1]
-    
+
+    # ✅ 目標改為「次日報酬率」（而非絕對收盤價）
+    y = df['Close'].pct_change().shift(-1)
+
+    # 去除無效列（最後一筆無次日標籤，開頭可能有 NaN）
+    valid = (~X.isnull().any(axis=1)) & (~y.isnull())
+    X = X[valid]
+    y = y[valid]
+
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    
+
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    X_full_scaled = scaler.transform(X)
-    
+
     if "Random Forest" in model_name:
         model = RandomForestRegressor(n_estimators=50, max_depth=10, random_state=42)
     elif "Linear Regression" in model_name:
         model = LinearRegression()
     else:  # MLPRegressor
         model = MLPRegressor(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42)
-    
+
     model.fit(X_train_scaled, y_train)
+
+    # 測試集評估（在「報酬率」空間計算 R² / MSE）
     y_pred_test = model.predict(X_test_scaled)
     r2 = r2_score(y_test, y_pred_test)
     mse = mean_squared_error(y_test, y_pred_test)
-    
-    # 使用最新一天的特徵預測明日收盤價
+
+    # ✅ 預測「次日報酬率」，再用今日收盤價換算回明日價格
     last_features = X.iloc[[-1]]
     last_scaled = scaler.transform(last_features)
-    next_day_price = model.predict(last_scaled)[0]
-    
+    pred_return = model.predict(last_scaled)[0]          # 預測的次日報酬率
+    today_close = df['Close'].iloc[-1]                   # 今日(最新)收盤價
+    next_day_price = today_close * (1 + pred_return)     # 換算回價格
+
     return {
         "r2": r2,
         "mse": mse,
+        "pred_return": pred_return,
         "next_day_price": next_day_price,
         "model": model,
         "scaler": scaler
@@ -199,7 +210,7 @@ def get_llm_summary(ticker, next_price, r2, mae):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+            temperature=0.7,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -235,7 +246,7 @@ with st.sidebar:
     selected_ticker = st.selectbox("投資標的 ETF", ("SPY", "QQQ", "0050.TW"))
     st.markdown("---")
     st.write("🤖 **分類模型設定 (對照組)**")
-    main_model_name = st.selectbox("主圖表顯示模型 (分類)", 
+    main_model_name = st.selectbox("主圖表顯示模型 (分類)",
                                    ["Random Forest", "XGBoost", "AdaBoost", "SVR", "Deep Learning (MLP)"])
     st.info("本平台以迴歸預測次日收盤價為主，分類漲跌僅供參考。")
 
@@ -261,14 +272,18 @@ col2.metric("分類趨勢 (輔助)", main_trend, delta=f"信心度 {main_conf:.1
 # 訓練迴歸模型並顯示預測值
 with st.spinner("訓練迴歸模型 (Random Forest Regressor)..."):
     reg_result = train_regression_model(raw_main_data, "Random Forest Regressor")
-col3.metric("📈 迴歸預測明日收盤價", f"${reg_result['next_day_price']:.2f}", delta=f"R²={reg_result['r2']:.3f}")
+# ✅ 同時顯示預測報酬率，讓數字更直觀
+col3.metric("📈 迴歸預測明日收盤價",
+            f"${reg_result['next_day_price']:.2f}",
+            delta=f"預測報酬率 {reg_result['pred_return']*100:+.2f}%")
 
 # 展開顯示迴歸模型詳細評估指標
-with st.expander("📊 迴歸模型評估指標 (測試集)"):
+with st.expander("📊 迴歸模型評估指標 (測試集，報酬率空間)"):
     st.write(f"**R² (決定係數)**: {reg_result['r2']:.4f}")
-    st.write(f"**MSE (均方誤差)**: {reg_result['mse']:.2f}")
-    st.write(f"**RMSE**: {np.sqrt(reg_result['mse']):.2f}")
-    st.caption("註：MAE 可從實際預測誤差計算，此處僅示範 R² 與 MSE。")
+    st.write(f"**MSE (均方誤差)**: {reg_result['mse']:.6f}")
+    st.write(f"**RMSE**: {np.sqrt(reg_result['mse']):.6f}")
+    st.caption("註：本平台改為預測『次日報酬率』再換算回價格，避免樹模型無法外推導致的不合理預測。"
+               "報酬率本身難以預測，故 R² 偏低屬正常現象，亦呼應本研究結論。")
 
 # AI 摘要按鈕
 if st.button("🤖 生成 AI 風險摘要 (OpenAI GPT)"):
