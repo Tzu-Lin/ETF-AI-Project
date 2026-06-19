@@ -1,18 +1,21 @@
 # =============================================================
 #  ARIMA 迴歸基準 — 預測次日收盤價
-#  驗證: rolling forecast (逐日滾動, ARIMA 標準作法)
-#  輸出: 最佳參數 / 訓練集MSE / 測試集MSE / 測試集MAPE(%)
+#  驗證: TimeSeriesSplit (5 折) + 每折內 rolling forecast (逐日 1 步)
+#        → 與樹模型 / LSTM 迴歸統一驗證結構, 公平比較
+#  輸出: 各折參數 / 平均訓練MSE / 平均測試MSE / 平均測試MAPE(%)
 #  資料: etf_data.db    需要: pmdarima statsmodels scikit-learn
 # =============================================================
 import sqlite3, warnings
 import pandas as pd, numpy as np
 import pmdarima as pm
 from statsmodels.tsa.stattools import adfuller
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
 warnings.filterwarnings("ignore")
 
 DB = "etf_data.db"
 MARKETS = ["SPY", "QQQ", "0050.TW"]
+N_SPLITS = 5
 
 
 def mape(y, p):
@@ -37,38 +40,52 @@ def adf_test(series, name):
 
 results = []
 print("=" * 60)
-print("ARIMA 迴歸基準 — rolling forecast (讀 etf_data.db)")
+print("ARIMA 迴歸基準 — TimeSeriesSplit(5 折) + 每折 rolling forecast")
 print("=" * 60)
+
 for ticker in MARKETS:
     s = load_close(ticker)
-    n = int(len(s) * 0.8)
-    train, test = s.iloc[:n], s.iloc[n:]
-    print(f"\n● {ticker}  (訓練 {len(train)} / 測試 {len(test)})")
-    adf_test(train, ticker)
+    print(f"\n● {ticker}  (總樣本 {len(s)})")
+    adf_test(s, ticker)                      # 對整段序列做一次 ADF 檢定
 
-    model = pm.auto_arima(train, start_p=1, start_q=1, max_p=5, max_q=5,
-                          d=None, seasonal=False, stepwise=True,
-                          error_action="ignore", suppress_warnings=True)
+    tscv = TimeSeriesSplit(n_splits=N_SPLITS)
+    fold_train_mse, fold_test_mse, fold_test_mape, orders = [], [], [], []
 
-    train_pred = np.asarray(model.predict_in_sample())
-    train_mse = mean_squared_error(train.values, train_pred)
+    for k, (tr, te) in enumerate(tscv.split(s.values), start=1):
+        train, test = s.iloc[tr], s.iloc[te]
 
-    # rolling: 每步用真實值更新後預測下一天
-    preds = []
-    for actual in test.values:
-        preds.append(np.asarray(model.predict(n_periods=1))[0])
-        model.update(actual)
-    preds = np.asarray(preds)
-    test_mse = mean_squared_error(test.values, preds)
-    test_mape = mape(test.values, preds)
+        model = pm.auto_arima(train, start_p=1, start_q=1, max_p=5, max_q=5,
+                              d=None, seasonal=False, stepwise=True,
+                              error_action="ignore", suppress_warnings=True)
+        orders.append(str(model.order))
 
-    print(f"   最佳參數 ARIMA{model.order}")
-    print(f"   訓練集 MSE  = {train_mse:.4f}")
-    print(f"   測試集 MSE  = {test_mse:.4f}")
-    print(f"   測試集 MAPE = {test_mape:.2f}%")
-    results.append({"市場": ticker, "參數": str(model.order),
-                    "訓練集MSE": round(train_mse, 4), "測試集MSE": round(test_mse, 4),
-                    "測試集MAPE(%)": round(test_mape, 2)})
+        # 訓練集 in-sample MSE
+        train_pred = np.asarray(model.predict_in_sample())
+        fold_train_mse.append(mean_squared_error(train.values, train_pred))
+
+        # 測試集: 每折內逐日 1 步滾動, 用真值更新
+        preds = []
+        for actual in test.values:
+            preds.append(np.asarray(model.predict(n_periods=1))[0])
+            model.update(actual)
+        preds = np.asarray(preds)
+        fold_test_mse.append(mean_squared_error(test.values, preds))
+        fold_test_mape.append(mape(test.values, preds))
+
+        print(f"   折 {k}: ARIMA{model.order}  訓練MSE={fold_train_mse[-1]:.4f}  "
+              f"測試MSE={fold_test_mse[-1]:.4f}  測試MAPE={fold_test_mape[-1]:.2f}%")
+
+    avg_train_mse = np.mean(fold_train_mse)
+    avg_test_mse  = np.mean(fold_test_mse)
+    avg_test_mape = np.mean(fold_test_mape)
+    print(f"   ──> 五折平均  訓練MSE={avg_train_mse:.4f}  "
+          f"測試MSE={avg_test_mse:.4f}  測試MAPE={avg_test_mape:.2f}%")
+
+    results.append({"市場": ticker,
+                    "各折參數": " / ".join(orders),
+                    "平均訓練MSE": round(avg_train_mse, 4),
+                    "平均測試MSE": round(avg_test_mse, 4),
+                    "平均測試MAPE(%)": round(avg_test_mape, 2)})
 
 print("\n" + "=" * 60 + "\n彙總表\n" + "=" * 60)
 dfres = pd.DataFrame(results)
